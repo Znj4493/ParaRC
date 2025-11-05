@@ -1,5 +1,6 @@
 #include "CoorCommand.hh"
 
+//* 构建命令时使用的构造函数
 CoorCommand::CoorCommand() {
   _coorCmd = (char*)calloc(MAX_COMMAND_LEN, sizeof(char));
   _cmLen = 0;
@@ -14,13 +15,15 @@ CoorCommand::~CoorCommand() {
   _cmLen = 0;
 }
 
+//* 解析命令时使用的构造函数
 CoorCommand::CoorCommand(char* reqStr) {
   _coorCmd = reqStr;
   _cmLen = 0;
 
-  // parse type
+  // parse type，获取命令类型
   _type = readInt();
 
+  // 根据不同的命令类型，调用不同的命令解析函数
   switch(_type) {
     case 0: resolveType0(); break;
     case 1: resolveType1(); break;
@@ -37,6 +40,8 @@ CoorCommand::CoorCommand(char* reqStr) {
 //    case 21: resolveType21(); break;
     default: break;
   }
+  //* 如果不清空，则后续通过freeReplyObject(rReply)时，_coorCmd就成为悬空指针（指向已释放内存的区域）
+  //* 若后续代码再次访问_coorCmd，就可能导致段错误
   _coorCmd = nullptr;
   _cmLen = 0;
 }
@@ -57,8 +62,11 @@ void CoorCommand::writeString(string s) {
 
 int CoorCommand::readInt() {
   int tmpint;
+  //&tmpint 先取到 tmpint 变量的地址；
+  // 再用 (char*)&tmpint 把这个地址转换成 char*，这样就按字节写入；
+  //这样 memcpy 才能把 _coorCmd + _cmLen 指向的 4 个字节拷贝进 tmpint。
   memcpy((char*)&tmpint, _coorCmd + _cmLen, 4); _cmLen += 4;
-  return ntohl(tmpint);
+  return ntohl(tmpint); // 把网络字节序转化为主机字节序
 }
 
 int CoorCommand::readRawInt() {

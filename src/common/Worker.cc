@@ -4,6 +4,7 @@ Worker::Worker(Config* conf, int id) : _conf(conf) {
   _id = id;
   // create local context
   try {
+    //* 初始化3条Redis连接，任务计数从0开始
     _processCtx = RedisUtil::createContext(_conf -> _localIp);
     _localCtx = RedisUtil::createContext(_conf -> _localIp);
     _coorCtx = RedisUtil::createContext(_conf -> _coorIp);
@@ -55,7 +56,7 @@ void Worker::doProcess() {
 //      cout << "OECWorker::doProcess().duration = " << RedisUtil::duration(time1, time2) << endl;
       // delete agCmd
       delete agCmd;
-      _tasknum++;
+      _tasknum++; //* 完成一个任务，计数加1
       //cout << "DistWorker::workerid: " << _id << ", tasknum: " << _tasknum << endl;
     }
     // free reply object
@@ -63,16 +64,18 @@ void Worker::doProcess() {
   }
 }
 
+//* 从磁盘上读取块数据，存到Redis缓存
 void Worker::readAndCache(AGCommand* agcmd) {
   //cout << "Worker::readDisk!" << endl;
   struct timeval time1, time2, time3;  
-  gettimeofday(&time1, NULL); 
+  gettimeofday(&time1, NULL);  //* 用于计算耗时
 
+  //* 从AGCommand中读取各种参数
   string blockname = agcmd->getBlockName();
   int blkbytes = agcmd->getBlkBytes();
   int pktbytes = agcmd->getPktBytes();
   int ecw = agcmd->getECW();
-  unordered_map<int, int> cid2refs = agcmd->getCid2Refs();
+  unordered_map<int, int> cid2refs = agcmd->getCid2Refs(); //* 块ID->这个快要存几份
   string stripename = agcmd->getStripeName();
 
   //cout << "Worker::readDisk.blockname: " << blockname << endl;
@@ -961,11 +964,13 @@ void Worker::concatenate2(AGCommand* agcmd) {
     }
 }
 
+//* 读取线程，读取块中的数据包，并放入阻塞队列中，等待缓存线程读取
 void Worker::readWorker(BlockingQueue<DataPacket*>* readqueue, string blockname, int ecw, vector<int> pattern, int blkbytes, int pktbytes) {
   // string fullpath = _conf->_blkDir + "/" + blockname;
   string fullpath = DistUtil::getFullPathForBlock(_conf->_blkDir, blockname);
   cout << "Worker::readWorker:fullpath = " << fullpath << endl;
   
+  //* 计算参数
   int fd = open(fullpath.c_str(), O_RDONLY);
   int subpktbytes = pktbytes / ecw;
   int pktnum = blkbytes / pktbytes;
@@ -973,15 +978,21 @@ void Worker::readWorker(BlockingQueue<DataPacket*>* readqueue, string blockname,
 
   struct timeval time1, time2, time3;                                                                                                                                                                    
   gettimeofday(&time1, NULL); 
+  //* 遍历块中的每个数据包(pktnum)，每个数据包包含ecw个子包(pattern)
   for (int i=0; i<pktnum; i++) {
+    //* 遍历每个子包
     for (int j=0; j<ecw; j++) {
       if (pattern[j] == 0)
         continue;
       // now we erad the j-th subpacket in packet i
-      int start = i * pktbytes + j * subpktbytes;
+      int start = i * pktbytes + j * subpktbytes; //* 读第i个包中的第j个子包
       readLen = 0;
-      DataPacket* curpkt = new DataPacket(subpktbytes);
+
+      DataPacket* curpkt = new DataPacket(subpktbytes); //* 存放从磁盘中读取的数据
+      
+      //* 循环读直到读满一个子包
       while (readLen < subpktbytes) {
+        //* pread(文件描述符，写到哪里，还要读多少字节，从哪里开始读)
         if ((readl = pread(fd, 
                            curpkt->getData() + readLen, 
                            subpktbytes - readLen, 
@@ -991,6 +1002,7 @@ void Worker::readWorker(BlockingQueue<DataPacket*>* readqueue, string blockname,
           readLen += readl;
         }
       }
+      //* 把读取到的数据包放入阻塞队列中，等待缓存线程读取
       readqueue->push(curpkt);
     } 
   }
@@ -1119,6 +1131,7 @@ void Worker::readWorkerWithOffset(unordered_map<int, BlockingQueue<DataPacket*>*
     cout << "Worker::readWorker.duration: " << DistUtil::duration(time1, time2) << endl;
 }
 
+//* 从阻塞队列中取出数据包，并放入Redis中
 void Worker::cacheWorker(BlockingQueue<DataPacket*>* cachequeue, vector<int> idxlist, int ecw, string keybase, int blkbytes, int pktbytes, unordered_map<int, int> cid2refs) {
   struct timeval time1, time2;
   gettimeofday(&time1, NULL);
@@ -1134,8 +1147,8 @@ void Worker::cacheWorker(BlockingQueue<DataPacket*>* cachequeue, vector<int> idx
   for (int i=0; i<pktnum; i++) {
     for (int j=0; j<idxlist.size(); j++) {
       DataPacket* curslice = cachequeue->pop();
-      int cid = idxlist[j];
-      int ref = cid2refs[cid];
+      int cid = idxlist[j]; //* 获取块ID
+      int ref = cid2refs[cid]; //* 这个块要存几份
       //int ref = 1;
       //if (cid2refs.find(cid) != cid2refs.end())
       //    ref = cid2refs[cid];
@@ -1143,19 +1156,24 @@ void Worker::cacheWorker(BlockingQueue<DataPacket*>* cachequeue, vector<int> idx
       //string key = keybase+":"+to_string(idxlist[j])+":"+to_string(i);  
       string key = keybase+":"+to_string(idxlist[j]);
       
-      int len = curslice->getDatalen();
+      int len = curslice->getDatalen(); //* 数据包的长度
       char* raw = curslice->getRaw();
-      int rawlen = len + 4;
+      int rawlen = len + 4; //* 头4字节是用于存放长度信息的，所以数据的实际长度要加4
+      
+      //* 把命令追加到Redis连接的缓冲区，稍后统一发送到Redis
       for (int k=0; k<ref; k++) {
         redisAppendCommand(writeCtx, "RPUSH %s %b", key.c_str(), raw, rawlen); count++;
       }
       delete curslice;
+      //* 流水线优化，让发送命令和等待回复交织进行
       if (i>1) {
         redisGetReply(writeCtx, (void**)&rReply); replyid++;
         freeReplyObject(rReply);
       }
     }
   }
+
+  //* 收集剩余的回复
   for (int i=replyid; i<count; i++)  {
     redisGetReply(writeCtx, (void**)&rReply); replyid++;
     freeReplyObject(rReply);

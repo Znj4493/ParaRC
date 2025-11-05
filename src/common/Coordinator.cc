@@ -20,6 +20,7 @@ void Coordinator::doProcess() {
   while (true) {
     cout << "Coordinator::doProcess" << endl;
     // will never stop looping
+    // * 通过Redis阻塞式地从列表coor_request中获取元素，如果列表为空，则阻塞等待，直到有元素加入列表
     rReply = (redisReply*)redisCommand(_localCtx, "blpop coor_request 0");
     if (rReply -> type == REDIS_REPLY_NIL) {
       cerr << "Coordinator::doProcess() get feed back empty queue " << endl;
@@ -27,6 +28,7 @@ void Coordinator::doProcess() {
       cerr << "Coordinator::doProcess() get feed back ERROR happens " << endl;
     } else {
       cout << "Coordinator::doProcess() receive a request!" << endl;
+      //* 解析命令
       char* reqStr = rReply -> element[1] -> str;
       CoorCommand* coorCmd = new CoorCommand(reqStr);
       coorCmd->dump();
@@ -81,8 +83,9 @@ void Coordinator::degradeRead(CoorCommand* coorCmd) {
     string method = coorCmd->getMethod();
 
     StripeMeta* stripemeta = _stripeStore->getStripeMetaFromBlockName(blockName);
-    string code = stripemeta->getCodeName();
-
+    string code = stripemeta->getCodeName(); //* 获取编码方式
+    
+    //* 验证客户端ip的有效性
     if (find(_conf->_clientIPs.begin(), _conf->_clientIPs.end(), clientIp) == _conf->_clientIPs.end()) {
         clientIp = _conf->_clientIPs[0];       
     }
@@ -998,30 +1001,32 @@ void Coordinator::repairBlockDist2(string blockName, unsigned int clientip, bool
     delete ecdag;
 }
 
+//* Clay码的集中式修复方法 降级读：enforceip=true; wait=false
 void Coordinator::repairBlockDist1(string blockName, unsigned int clientip, bool enforceip, bool wait) {
     struct timeval time1, time2, time3;
     gettimeofday(&time1, NULL);
 
+    //todo <----------第一阶段：数据准备---------->
     cout << "Coor::repairBlock.blockName: " << blockName << endl;
 
-    // 0. figure out the stripe that contains this block
+    //* 0. 获取元数据：条带名称、块大小、子包大小 
     StripeMeta* stripemeta = _stripeStore->getStripeMetaFromBlockName(blockName);
     string stripename = stripemeta->getStripeName();
     long long blkbytes = stripemeta->getBlockBytes();
     int pktbytes = stripemeta->getPacketBytes();
     cout << "stripename: " << stripename << ", blkbytes: " << blkbytes << ", pktybtes: " << pktbytes << endl;
 
-    // 1. the index of the failed block
+    //* 1. 获取故障快的索引
     int repairBlockIdx = stripemeta->getBlockIndex(blockName);
     cout << "Coor::repairBlock.repairBlockIdx: " << repairBlockIdx << endl;
 
-    // 2. prepare avail and to repair
+    //* 2. 获取纠删码参数：n、k、w；获取所有块的位置列表
     int ecn = stripemeta->getECN();
     int eck = stripemeta->getECK();
     int ecw = stripemeta->getECW();
 
-    vector<string> blocklist = stripemeta->getBlockList();
-    vector<unsigned int> loclist = stripemeta->getLocList();
+    vector<string> blocklist = stripemeta->getBlockList(); //* 块名称列表：blocklisy[i] = 第i个块的名字
+    vector<unsigned int> loclist = stripemeta->getLocList(); //* 每个块的所在节点的ip：loclist[i] = 第i个块所在的ip
 
     // cout << "Coor::repairBlock.blocklist: " << endl;
     // for (int i=0; i<ecn; i++) {
@@ -1031,12 +1036,12 @@ void Coordinator::repairBlockDist1(string blockName, unsigned int clientip, bool
     // // 3. now we repair at the same location
     // unsigned int repairLoc = loclist[repairBlockIdx];
 
-    // 3. if enforceip, enforce clientip; otherwise choose the default
+    //* 3. 确定修复位置
     unsigned int repairLoc;
-    if (enforceip) {
-        repairLoc = clientip;
+    if (enforceip) { // 降级读时走这个分支
+        repairLoc = clientip; // conf->_localIp
         loclist[repairBlockIdx] = clientip;
-    } else {
+    } else { 
         repairLoc = loclist[repairBlockIdx];
         //repairLoc = selectRepairIp(loclist);
         //loclist[repairBlockIdx] = repairLoc;
@@ -1044,7 +1049,8 @@ void Coordinator::repairBlockDist1(string blockName, unsigned int clientip, bool
 
     cout << "repair location: " << RedisUtil::ip2Str(repairLoc) << endl;
 
-    // 4. prepare availidx
+    //todo <----------第二阶段：计算阶段1---------->
+    //* 1. 统计可用块(avaiIndex)和需要修复的快(toRepairIndex) 
     vector<int> availIndex;
     vector<int> toRepairIndex;
     for (int i=0; i<ecn; i++) {
@@ -1057,7 +1063,7 @@ void Coordinator::repairBlockDist1(string blockName, unsigned int clientip, bool
         }
     }
 
-    // 5. construct ECDAG
+    //* 2. 构建ECDAG ？
     ECBase* ec = stripemeta->createECClass();
     ecw = ec->_w;
     ECDAG* ecdag = ec->Decode(availIndex, toRepairIndex);
@@ -1193,43 +1199,54 @@ void Coordinator::repairBlockDist1(string blockName, unsigned int clientip, bool
 
     gettimeofday(&time2, NULL);
 
-    // 14. send out commands
-    vector<char*> todelete;
-    redisContext* distCtx = RedisUtil::createContext(_conf->_coorIp);
+    //todo <----------第四阶段：执行阶段---------->
+    //* 1. 准备发送
+    vector<char*> todelete; // 存放待删除的内存指针
+    redisContext* distCtx = RedisUtil::createContext(_conf->_coorIp); // 连接到Redis
 
+    //* 2. 发送命令
     debug=0;
-    redisAppendCommand(distCtx, "MULTI");
+    redisAppendCommand(distCtx, "MULTI"); // 开启Redis事务，保证命令的发送不会被中断
+    // 遍历所有修复任务
     for (auto agcmd: cmdlist) {
+      // 获取目标Agent的ip、命令字符串、命令长度
       unsigned int ip = agcmd->getSendIp();
       ip = htonl(ip);
       char* cmdstr = agcmd->getCmd();
       int cmLen = agcmd->getCmdLen();
+
+      // 构造命令
       char* todist = (char*)calloc(cmLen + 4, sizeof(char));
       memcpy(todist, (char*)&ip, 4);
       memcpy(todist+4, cmdstr, cmLen); 
-      todelete.push_back(todist);
+      todelete.push_back(todist); // 记下来待删除
       redisAppendCommand(distCtx, "RPUSH dist_request %b", todist, cmLen+4);
 
       debug++;
     }
-    redisAppendCommand(distCtx, "EXEC");
+    redisAppendCommand(distCtx, "EXEC"); // 执行事务
     
-    redisReply* distReply;
+    //* 3. 命令发送完成，收集回复
+    redisReply* distReply; // 获取MULTI的回复
     redisGetReply(distCtx, (void **)&distReply);
     freeReplyObject(distReply);
+    // 获取每个RPUSH的回复
     for (auto item: todelete) {
       redisGetReply(distCtx, (void **)&distReply);
       freeReplyObject(distReply);
     }
-    redisGetReply(distCtx, (void **)&distReply);
+    redisGetReply(distCtx, (void **)&distReply); // 获取EXEC的回复
     freeReplyObject(distReply);
-    redisFree(distCtx);
+    redisFree(distCtx); // 关闭Redis连接
  
-    // wait for finish flag?
+    // wait for finish flag? 降级读时不进入该分支
     if (wait) {
+        // Agent在repairLoc上完成修复后，向repairLoc的Redis发送完成信号，Coordinator连接到repairLoc监听信号
         redisContext* waitCtx = RedisUtil::createContext(repairLoc);
         string wkey = "writefinish:"+blockName;
+        // 阻塞等待，直到wky列表弹出一个元素
         redisReply* fReply = (redisReply*)redisCommand(waitCtx, "blpop %s 0", wkey.c_str());
+        // 释放资源，关闭Redis连接
         freeReplyObject(fReply);
         redisFree(waitCtx);
         gettimeofday(&time3, NULL);

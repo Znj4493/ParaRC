@@ -16,14 +16,14 @@
 
 class Worker {
   private: 
-    int _id;
+    int _id; //* worker的编号
     Config* _conf;
 
-    redisContext* _processCtx;
-    redisContext* _localCtx;
-    redisContext* _coorCtx;
+    redisContext* _processCtx; //* 用于接受任务的连接
+    redisContext* _localCtx; //* 用于本地存储的连接(比如缓存一些数据)
+    redisContext* _coorCtx; //* 用于与Coordinator通信的连接
 
-    int _tasknum;
+    int _tasknum; //* 已完成的任务数量
 
   public:
     Worker(Config* conf, int id);

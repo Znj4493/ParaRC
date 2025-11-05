@@ -30,8 +30,9 @@ int main(int argc, char** argv) {
   }
   cout << "OECCoordinator started ......" << endl;
   
+  //* 主线程等待所有子线程执行完毕
   for (int i=0; i<conf->_coorThreadNum; i++) {
-    thrds[i].join();
+    thrds[i].join(); // 只有threads[i]线程执行完毕,join()才会返回,程序才能继续往下执行
   }
   /**
    * Shoule never reach here

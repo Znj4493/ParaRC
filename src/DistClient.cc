@@ -29,8 +29,8 @@ void degradeRead(string blockname, string method) {
 
     // wait for finish flag?
     redisContext* waitCtx = RedisUtil::createContext(conf->_localIp);
-    string wkey = "writefinish:"+blockname;
-    redisReply* fReply = (redisReply*)redisCommand(waitCtx, "blpop %s 0", wkey.c_str());
+    string wkey = "writefinish:"+blockname; //* 构造Redis键名
+    redisReply* fReply = (redisReply*)redisCommand(waitCtx, "blpop %s 0", wkey.c_str()); //* 阻塞等待写完成
     freeReplyObject(fReply);
     redisFree(waitCtx);
 
