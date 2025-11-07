@@ -18,6 +18,7 @@ add_executable(BruteForce BruteForce.cc)
 add_executable(GenMLP GenMLP.cc)
 add_executable(CodeTest CodeTest.cc)
 add_executable(GenData GenData.cc)
+add_executable(GenMLP_new GenMLP_new.cc)
 
 target_link_libraries(DistCoordinator common pthread protocol ec)
 target_link_libraries(DistAgent common pthread ec)
