@@ -25,9 +25,9 @@ using namespace std;
 
 class ECDAG {
   private:
-    unordered_map<int, ECNode*> _ecNodeMap;
-    vector<int> _ecHeaders;
-    vector<int> _ecLeaves;
+    unordered_map<int, ECNode*> _ecNodeMap; //* 节点映射：节点索引 -> 节点
+    vector<int> _ecHeaders; //* 头节点：修复好的块
+    vector<int> _ecLeaves; //* 叶子节点：原始块
 
     // // for SimpleGraph
     // int _sgId = SGSTART;
@@ -36,11 +36,11 @@ class ECDAG {
     // unordered_map<int, vector<int>> _child2sgs;
 
     // for coloring
-    unordered_map<int, unsigned int> _idx2ip;
+    unordered_map<int, unsigned int> _idx2ip; //* 节点索引 -> 节点IP
 
     // for ECUnits
     int _unitId = USTART;
-    unordered_map<int, ECUnit*> _ecUnitMap;
+    unordered_map<int, ECUnit*> _ecUnitMap; //* 单元映射：单元索引 -> 单元
     vector<int> _ecUnitList;
 
     // for ECClusters
@@ -52,7 +52,9 @@ class ECDAG {
     ECDAG(); 
     ~ECDAG();
 
+    //* 将cidx中的块通过系数表coefs进行编码，得到pidx块
     void Join(int pidx, vector<int> cidx, vector<int> coefs);
+    //* 标记输出节点，调用Join添加一个REQUESTOR节点
     void Concact(vector<int> cidx);
 
     //void genSimpleGraph();

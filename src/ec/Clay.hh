@@ -80,7 +80,9 @@ class Clay: public ECBase {
         Clay(int n, int k, int w, vector<string> param);
 //        Clay(int n, int k, int w, int opt, vector<string> param);
 //
+        //* 把k个块编码为n个块，输出ECDAG
         ECDAG* Encode();
+        //* 设计如何从from块中恢复to块，输出ECDAG
         ECDAG* Decode(vector<int> from, vector<int> to);
 //        void Place(vector<vector<int>>& group);
 //        void Shorten(unordered_map<int, int>& shortening);

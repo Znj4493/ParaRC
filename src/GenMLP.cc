@@ -417,6 +417,7 @@ Solution* genSol(vector<int> itm_idx, vector<int> candidates,
 
     int i=0;
     while (true) {
+        //* 一、生成权衡曲线
         head = genTradeoffCurve(itm_idx, candidates, sidx2ip, ecdag);
         bool find = false;
         s == NULL;
@@ -481,7 +482,7 @@ Solution* genSol(vector<int> itm_idx, vector<int> candidates,
         i++;
 
         if (find && i>rounds) {
-            break;
+            break; //终止条件
         }
 
     }
@@ -634,13 +635,14 @@ int main(int argc, char** argv) {
     cout << "wrong ec id!" << endl;
     return -1;
   }
-  w = ec->_w;
+  w = ec->_w; //* w会根据编码方式自动调整
 
-  vector<int> avail;
-  vector<int> torepair;
+  vector<int> avail; //* 所有可用快的子块
+  vector<int> torepair; //* 需要修复的块的子块
   for (int i=0; i<n; i++) {
     for (int j=0; j<w; j++) {
       int idx = i*w+j;
+
       if (i == repairIdx)
         torepair.push_back(idx);
       else
@@ -649,18 +651,18 @@ int main(int argc, char** argv) {
   }
 
   ECDAG* ecdag = ec->Decode(avail, torepair);
-  ecdag->Concact(torepair);
+  ecdag->Concact(torepair); //* 从工程的角度标记一下需要修复的快到底是哪一个
   //ecdag->dump();
 
   // divide ecdag into ecunits
   ecdag->genECUnits();
 
   // get data structures from ecdag
-  unordered_map<int, ECNode*> ecNodeMap = ecdag->getECNodeMap();
-  vector<int> ecHeaders = ecdag->getECHeaders(); 
-  vector<int> ecLeaves = ecdag->getECLeaves();
-  unordered_map<int, ECUnit*> ecunits = ecdag->getUnitMap();
-  vector<int> ecUnitList = ecdag->getUnitList();
+  unordered_map<int, ECNode*> ecNodeMap = ecdag->getECNodeMap(); //* 获取所有块（节点）
+  vector<int> ecHeaders = ecdag->getECHeaders(); //* 获取生成的块（包括修复块和中间计算产生的块）
+  vector<int> ecLeaves = ecdag->getECLeaves(); //* 获取原始块
+  unordered_map<int, ECUnit*> ecunits = ecdag->getUnitMap(); //* 获取所有计算单元
+  vector<int> ecUnitList = ecdag->getUnitList(); //* 获取所有计算单元的ID列表
 
   cout << "Total nodes: " << ecNodeMap.size() << endl;
   cout << "Header nodes: " << ecHeaders.size() << endl;
@@ -677,7 +679,8 @@ int main(int argc, char** argv) {
   // suppose the number of available nodes equals to n
   // idx from 0, 1, ..., n
   // we first color the leave nodes and header nodes
-  unordered_map<int, int> sidx2ip;
+  //* 创建子块到块的映射（给原始块着色）
+  unordered_map<int, int> sidx2ip; 
   int realLeaves=0;
   for (auto sidx: ecLeaves) {
     int bidx = sidx / w;
@@ -695,27 +698,29 @@ int main(int argc, char** argv) {
   //     cout << item.first << ": " << item.second << endl;
   // }
 
-  // figure out header color
-  int bidx = torepair[0]/w;
-  for (auto sidx: ecHeaders) {
+  // todo 为头节点着色
+  int bidx = torepair[0]/w; //* 需要修复的块的块索引
+  for (auto sidx: ecHeaders) { //* 遍历所有头节点，将其着色为bidx
     sidx2ip.insert(make_pair(sidx, bidx));
   }
 
-  // now we try to color the intermediate node
-  vector<int> itm_idx;
-  vector<int> candidates;
-  for (auto item: ecNodeMap) {
+  // todo 为中间节点着色
+  vector<int> itm_idx; //* 中间节点的索引列表
+  vector<int> candidates; //* 中间结点的候选颜色列表
+  for (auto item: ecNodeMap) { //* 遍历所有节点，跳过头节点和叶子节点
     int sidx = item.first;
     if (find(ecHeaders.begin(), ecHeaders.end(), sidx) != ecHeaders.end())
       continue;
     if (find(ecLeaves.begin(), ecLeaves.end(), sidx) != ecLeaves.end())
       continue;
+
+    //* 是中间节点，将其初始化为未着色  
     itm_idx.push_back(sidx);
     sidx2ip.insert(make_pair(sidx, -1));
   }
 
   for (int i=0; i<n; i++)
-    candidates.push_back(i);
+    candidates.push_back(i); //* 每个中间节点可以着色未0~n-1
   sort(itm_idx.begin(), itm_idx.end());
 
   //cout << "itm_idx: ";
@@ -739,19 +744,20 @@ int main(int argc, char** argv) {
   // }
   // cout << endl;
   
-  // The size of the solution space
+  //* 计算解空间大小（有多少种可能的着色方案），有x个中间节点，每个节点有n个方案
   double spacesize = pow(candidates.size(), itm_idx.size());
   cout << "Spacesize: " << spacesize << endl;
 
   // simple search
   
   vector<int> curres;
+  //* 初始化搜索结果
   for (int i=0; i<itm_idx.size(); i++)
     curres.push_back(-1);
 
-  double found=0;
-  unordered_map<int, vector<int>> max2bwlist;
-  unordered_map<int, double> process;
+  double found=0; //* 搜索轮数
+  unordered_map<int, vector<int>> max2bwlist; //* 最大带宽 -> 带宽列表
+  unordered_map<int, double> process; //* 进度 -> 时间
 
   int round = n*w;
   if (k>=6 && k < 8)
