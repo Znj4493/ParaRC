@@ -27,4 +27,4 @@ target_link_libraries(BruteForce common ec protocol)
 target_link_libraries(GenMLP common ec protocol dist)
 target_link_libraries(GenData common ec protocol dist)
 target_link_libraries(CodeTest common ec)
-
+target_link_libraries(GenMLP_new common ec protocol dist)
