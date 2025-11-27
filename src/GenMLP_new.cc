@@ -16,7 +16,7 @@ using namespace std;
 
 // ========== 缓存优化：全局缓存结构 ==========
 // 用于缓存 stat() 函数的计算结果
-// key: 着色方案（vector<int>）
+// key: 中间节点的着色方案（vector<int>）
 // value: (bandwidth, maxload) 对
 map<vector<int>, pair<int, int>> g_stat_cache;
 
@@ -27,7 +27,8 @@ void clearStatCache() {
 
 // 获取缓存统计
 void printCacheStats() {
-    cout << "[Cache Stats] Total cached results: " << g_stat_cache.size() << endl;
+    cout<< "\n========== 缓存统计 ==========" << endl;
+    cout << "[Cached Solutions Count] 缓存的方案数: " << g_stat_cache.size() << endl;
 }
 
 void usage() {

@@ -14,6 +14,25 @@ using namespace std;
 
 #define CLUSTERSIZE 32768
 
+// ====== 统计优化必要性的全局变量 ======
+set <vector<int>> g_all_solutions; // 所有见过的方案
+int g_stat_call_total = 0; // stat() 的总调用次数
+int g_cross_round_repeat = 0; // 跨轮重复次数
+
+void printStatisticsReport()
+{
+    cout << "\n========== GenMLP搜索统计 ==========" << endl;
+    cout << "stat() 的总调用次数: " << g_stat_call_total << endl;
+    cout << "唯一方案数：" << g_all_solutions.size() << endl;
+    cout << "跨轮重复次数：" << g_cross_round_repeat << endl;
+    if(g_stat_call_total > 0)
+    {
+        double waste_ratio = (double)g_cross_round_repeat / g_stat_call_total * 100;
+        cout << "可优化的比例：" << waste_ratio << "%" << endl;
+    }
+
+    cout << "==================================\n" << endl;
+}
 void usage() {
   cout << "Usage: ./GenMLP" << endl;
   cout << "    1. code" << endl;
@@ -239,43 +258,63 @@ bool updateTradeoffCurve(Solution* head, Solution* tail, Solution* sol,
     return status;
 }
 
+//* 从当前方案生成所有邻近方案，并将满足条件的方案添加到权衡曲线中
 void expand(Solution* current, int v, int m, unordered_map<string, bool>& visited,
         unordered_map<int, int> sidx2ip, vector<int> itm_idx, ECDAG* ecdag,
         unordered_map<int, int>& load2bdwt, unordered_map<int, int>& bdwt2load,
         Solution* tradeoff_curve_head, Solution* tradeoff_curve_tail) {
     //cout << "    expand: " << current->getString() << ", load: " << current->getLoad() << ", bdwt: " << current->getBdwt() << endl;
 
+    //* 获取当前方案，并标记为已访问
     vector<int> solution = current->getSolution();
     current->setExpanded(true);
 
+    //* 双重循环遍历每个中间节点的每个可选颜色
     for (int i=0; i<v; i++) {
         int oldv = solution[i];
         for (int j=0; j<m; j++) {
-            if (j == oldv)
+            if (j == oldv) // 跳过相同颜色
                 continue;
             // update the color of one vertex
-            solution[i] = j;
-            Solution* neighbor = new Solution(v, m, solution);
+            solution[i] = j; //* 将中间节点i的颜色设置为j
+            Solution* neighbor = new Solution(v, m, solution); //* 创建邻近方案
             string tmps = neighbor->getString();
             //cout << "      neighbor: " << tmps << endl;
             
             Solution* current = tradeoff_curve_head;
 
-            // check whether the neighbor has been visited
+            //* 检查该方案是否已访问过
             if (visited.find(tmps) != visited.end()) {
                 // this solution has been visited
                 //cout << "        visited, skip" << endl;
                 delete neighbor;
-            } else {
+            } else { //! 未访问过该方案，使用stat计算该方案的性能指标
                 // this solution hasn't been visited before
                 // get stat for the neighbor
                 int neighbor_bdwt, neighbor_load;
+
+                //todo ====== 检查跨轮重复 ======
+                vector<int> neighbor_solution = neighbor->getSolution();
+                if(g_all_solutions.find(neighbor_solution) != g_all_solutions.end())
+                {
+                    // 这个方案在之前的轮次出现过
+                    g_cross_round_repeat++;
+                }
+                else
+                {
+                    // 第一次见到这个方案，添加到全局集合
+                    g_all_solutions.insert(neighbor_solution);
+                }
+                g_stat_call_total++;
+                //todo =========================
+
                 stat(sidx2ip, neighbor->getSolution(), itm_idx, ecdag, &neighbor_bdwt, &neighbor_load);
                 neighbor->setBdwt(neighbor_bdwt);
                 neighbor->setLoad(neighbor_load);
-                visited.insert(make_pair(tmps, true));
+                visited.insert(make_pair(tmps, true)); //* 标记为已访问
                 //cout << "        load: " << neighbor->getLoad() << ", bdwt: " << neighbor->getBdwt() << endl;
 
+                //* 快速检查该方案是否被支配
                 // now we check whether the current neighbor can update
                 // the tradeoff_curve. we first do a quick search
                 if (load2bdwt.find(neighbor_load) != load2bdwt.end()) {
@@ -300,6 +339,7 @@ void expand(Solution* current, int v, int m, unordered_map<string, bool>& visite
                 // we iterate the tradeoff curve to insert the neighbor and
                 // update two maps
                 if (neighbor) {
+                    //* 通过了快速检查，现在完整检查该方案是否被支配
                     if(!updateTradeoffCurve(tradeoff_curve_head, tradeoff_curve_tail, neighbor, load2bdwt, bdwt2load)) {
                         delete neighbor;
                         neighbor = NULL;
@@ -404,6 +444,7 @@ int getLength(Solution* head) {
     return size;
 }
 
+//* 搜索最优着色方案
 Solution* genSol(vector<int> itm_idx, vector<int> candidates,
         unordered_map<int, int> sidx2ip, ECDAG* ecdag,
         int rounds, int target_load, int target_bdwt, int conv) {
@@ -422,7 +463,7 @@ Solution* genSol(vector<int> itm_idx, vector<int> candidates,
         bool find = false;
         s == NULL;
 
-        // iterate the tradeoff line
+        //* 二、遍历权衡曲线上的每个解
         cur = head->getNext();
         while (cur) {
             int load = cur->getLoad();
@@ -435,7 +476,7 @@ Solution* genSol(vector<int> itm_idx, vector<int> candidates,
                 break;
             } 
 
-            // check whether current solution is good enough
+            //* 三、检查当前解是否满足目标要求
             if (load >= target_load && bdwt < target_bdwt && load < conv && bdwt >= conv) {
                 //cout << "  yes" << endl;
                 find = true;
@@ -459,7 +500,7 @@ Solution* genSol(vector<int> itm_idx, vector<int> candidates,
 
         }
 
-        //  now we find a solution, compare it with sol
+        //* 四、找到最优解
         if (find) {
             if (sol == NULL)
                 sol = s;
@@ -659,7 +700,7 @@ int main(int argc, char** argv) {
 
   // get data structures from ecdag
   unordered_map<int, ECNode*> ecNodeMap = ecdag->getECNodeMap(); //* 获取所有块（节点）
-  vector<int> ecHeaders = ecdag->getECHeaders(); //* 获取生成的块（包括修复块和中间计算产生的块）
+  vector<int> ecHeaders = ecdag->getECHeaders(); //* 获取需要修复的块
   vector<int> ecLeaves = ecdag->getECLeaves(); //* 获取原始块
   unordered_map<int, ECUnit*> ecunits = ecdag->getUnitMap(); //* 获取所有计算单元
   vector<int> ecUnitList = ecdag->getUnitList(); //* 获取所有计算单元的ID列表
@@ -679,7 +720,7 @@ int main(int argc, char** argv) {
   // suppose the number of available nodes equals to n
   // idx from 0, 1, ..., n
   // we first color the leave nodes and header nodes
-  //* 创建子块到块的映射（给原始块着色）
+  //* 创建子块到块的映射（给原始子块着色）
   unordered_map<int, int> sidx2ip; 
   int realLeaves=0;
   for (auto sidx: ecLeaves) {
@@ -698,9 +739,9 @@ int main(int argc, char** argv) {
   //     cout << item.first << ": " << item.second << endl;
   // }
 
-  // todo 为头节点着色
+  // todo 为要修复的子块着色（创建要修复的子块到其对应的块的映射）
   int bidx = torepair[0]/w; //* 需要修复的块的块索引
-  for (auto sidx: ecHeaders) { //* 遍历所有头节点，将其着色为bidx
+  for (auto sidx: ecHeaders) { //* 遍历所有要修复的块，将其着色为bidx
     sidx2ip.insert(make_pair(sidx, bidx));
   }
 
@@ -720,7 +761,7 @@ int main(int argc, char** argv) {
   }
 
   for (int i=0; i<n; i++)
-    candidates.push_back(i); //* 每个中间节点可以着色未0~n-1
+    candidates.push_back(i); //* 每个中间节点可以着色为0~n-1
   sort(itm_idx.begin(), itm_idx.end());
 
   //cout << "itm_idx: ";
@@ -777,5 +818,6 @@ int main(int argc, char** argv) {
   // print the mlp
   cout << "Digits: " << mlp->getDigits() << ", string: " << mlp->getString() << endl;
 
+  printStatisticsReport();
   return 0;
 }
